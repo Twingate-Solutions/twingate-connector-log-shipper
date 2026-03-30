@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/twingate-solutions/twingate-log-shipper/schemas/audit_log.json",
+  "title": "Twingate Audit Log Event",
+  "description": "An audit log event from Twingate's S3 export.",
+  "type": "object",
+  "required": ["timestamp", "action", "actor", "target"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the action"
+    },
+    "action": {
+      "type": "string",
+      "enum": ["create", "update", "delete", "login", "logout", "enable", "disable", "revoke"],
+      "description": "Admin action performed"
+    },
+    "actor": {
+      "type": "object",
+      "required": ["email", "id"],
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "id": { "type": "string" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["type", "name", "id"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["resource", "group", "user", "connector", "remote_network", "policy"]
+        },
+        "name": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "changes": {
+      "type": "object",
+      "description": "Before/after values for update actions.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "before": {},
+          "after": {}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

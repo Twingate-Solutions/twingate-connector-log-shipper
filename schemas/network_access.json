@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/twingate-solutions/twingate-log-shipper/schemas/network_access.json",
+  "title": "Twingate Network Access Event",
+  "description": "A network_access event from Twingate's S3 export (established_connection or closed_connection).",
+  "type": "object",
+  "required": ["event_type", "timestamp", "user", "device", "resource", "connection", "connector", "remote_network", "location", "relays"],
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "enum": ["established_connection", "closed_connection"]
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix epoch milliseconds"
+    },
+    "user": {
+      "type": "object",
+      "required": ["email", "id"],
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "id": { "type": "string" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["address", "id"],
+      "properties": {
+        "address": { "type": "string" },
+        "applied_rule": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "required": ["id", "client_ip", "resource_ip", "resource_port", "protocol", "rx", "tx", "tunnel_path", "tunnel_proto"],
+      "properties": {
+        "id": { "type": "string" },
+        "client_ip": { "type": "string" },
+        "resource_ip": { "type": "string" },
+        "resource_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "type": "string", "enum": ["tcp", "udp"] },
+        "rx": { "type": "integer", "minimum": 0 },
+        "tx": { "type": "integer", "minimum": 0 },
+        "duration": { "type": "integer", "minimum": 0 },
+        "tunnel_path": { "type": "string", "enum": ["direct", "relayed"] },
+        "tunnel_proto": { "type": "string", "enum": ["quic/udp", "tcp"] },
+        "cbct_freshness": { "type": "integer" }
+      }
+    },
+    "connector": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "remote_network": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "location": {
+      "type": "string",
+      "description": "JSON-encoded string. Double-parse to access geoip fields."
+    },
+    "relays": { "type": "array" }
+  },
+  "additionalProperties": false
+}

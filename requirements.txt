@@ -1,0 +1,15 @@
+# Production dependencies for twingate-log-shipper
+# Generated 2026-03-27
+# Install: pip install -r requirements.txt
+
+aiobotocore==2.13.2
+aiohttp==3.9.5
+aioitertools==0.11.0
+botocore==1.34.131
+pydantic==2.7.4
+pydantic-settings==2.3.4
+structlog==24.1.0
+wrapt==1.16.0
+
+# Optional: journald mode (Linux only)
+# systemd-python==235

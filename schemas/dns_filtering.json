@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/twingate-solutions/twingate-log-shipper/schemas/dns_filtering.json",
+  "title": "Twingate DNS Filtering Event",
+  "description": "A dns_filtering event from Twingate's S3 export.",
+  "type": "object",
+  "required": ["event_type", "event"],
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "const": "dns_filtering"
+    },
+    "event": {
+      "type": "object",
+      "required": ["version", "time", "domain", "root", "device", "connection", "status", "reasons"],
+      "properties": {
+        "version": { "type": "integer" },
+        "time": { "type": "string", "format": "date-time" },
+        "domain": { "type": "string" },
+        "root": { "type": "string" },
+        "device": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": ["string", "null"] },
+            "model": { "type": ["string", "null"] }
+          }
+        },
+        "connection": {
+          "type": "object",
+          "required": ["client_ip", "protocol"],
+          "properties": {
+            "client_ip": { "type": "string" },
+            "protocol": { "type": "string", "enum": ["DNS", "DNS-over-HTTPS"] }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": ["default", "blocked", "allowed"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

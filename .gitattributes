@@ -1,0 +1,4 @@
+# Enforce LF line endings in the repo and on checkout everywhere.
+# This prevents ruff/editors on Windows checking out CRLF files that then
+# fail CI format checks running on Linux.
+* text=auto eol=lf

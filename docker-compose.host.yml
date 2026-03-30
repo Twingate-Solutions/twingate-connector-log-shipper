@@ -1,0 +1,45 @@
+# docker-compose.host.yml
+# Host-level deployment: one shipper per Docker host, watching all Twingate
+# connector containers by name filter.
+#
+# Required environment variables (pass via .env file or export before running):
+#   S3_BUCKET            - S3 bucket name
+#   S3_ACCESS_KEY_ID     - S3 access key
+#   S3_SECRET_ACCESS_KEY - S3 secret key
+#
+# Optional:
+#   S3_ENDPOINT_URL      - Custom S3 endpoint (MinIO, R2, B2, etc.). Leave unset for AWS S3.
+#   S3_REGION            - AWS region (default: us-east-1)
+#   BATCH_INTERVAL       - Batch flush interval in seconds (default: 60)
+#
+# Usage:
+#   docker compose -f docker-compose.host.yml up -d
+
+services:
+  twingate-log-shipper:
+    image: ghcr.io/twingate-solutions/twingate-log-shipper:latest
+    restart: unless-stopped
+    # Root is required to read /var/lib/docker/containers (owned by root, mode 710).
+    # The shipper only reads log files and makes outbound S3 calls — it does not
+    # bind any ports or write to the host filesystem.
+    user: "0"
+    environment:
+      TWINGATE_SHIPPER_MODE: "docker"
+      # Matches containers whose image name contains this string.
+      # The default "twingate/connector" works for any standard connector deployment.
+      # Override if you use a custom connector image or need to match a specific container name.
+      TWINGATE_SHIPPER_DOCKER_CONTAINER_NAME_FILTER: "${CONNECTOR_FILTER:-twingate/connector}"
+      TWINGATE_SHIPPER_S3_BUCKET: "${S3_BUCKET}"
+      TWINGATE_SHIPPER_S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID}"
+      TWINGATE_SHIPPER_S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY}"
+      # TWINGATE_SHIPPER_S3_ENDPOINT_URL: "https://..."  # uncomment for MinIO, R2, B2, etc.
+      TWINGATE_SHIPPER_S3_REGION: "${S3_REGION:-us-east-1}"
+      TWINGATE_SHIPPER_BATCH_INTERVAL_SECONDS: "${BATCH_INTERVAL:-60}"
+    volumes:
+      # Read-only access to Docker container log files on the host
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
