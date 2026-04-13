@@ -22,7 +22,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" pip-audit
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit --requirement requirements.txt
 
       - name: Lint (ruff check)
         run: ruff check src/ tests/

@@ -56,6 +56,11 @@ services:
       # Override if you use a custom connector image or need to match a specific container name.
       TWINGATE_SHIPPER_DOCKER_CONTAINER_NAME_FILTER: "${CONNECTOR_FILTER:-twingate/connector}"
       TWINGATE_SHIPPER_S3_BUCKET: "${S3_BUCKET}"
+      # NOTE: S3 credentials passed as environment variables are visible via `docker inspect`
+      # to any user with Docker socket access. For production deployments, prefer:
+      #   - AWS IAM roles via ECS task role (no static credentials needed)
+      #   - Docker Secrets (swarm) or Kubernetes Secrets mounted as env vars
+      #   - A secrets manager (AWS Secrets Manager, HashiCorp Vault, etc.)
       TWINGATE_SHIPPER_S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID}"
       TWINGATE_SHIPPER_S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY}"
       # TWINGATE_SHIPPER_S3_ENDPOINT_URL: "https://..."  # uncomment for MinIO, R2, B2, etc.
