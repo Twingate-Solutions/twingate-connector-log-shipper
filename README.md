@@ -32,10 +32,10 @@ Twingate Connector
 | Mode | Description |
 |---|---|
 | `docker` (sidecar) | Shipper container runs alongside a single connector in the same Compose stack or ECS/ACS task |
-| `docker` (host-level) | One shipper per Docker host, watching all connector containers by name filter |
+| `docker` (host-level) | One shipper per Docker host, watching **all** matching connector containers concurrently, with dynamic discovery as containers start/stop |
 | `journald` | Systemd service on the same host as a systemd-managed Twingate connector |
 
-The shipper filters only lines starting with `ANALYTICS `, strips the prefix, parses the JSON, and ignores all other connector output.
+On **stdout** the shipper keeps only lines starting with `ANALYTICS `, strips the prefix, and parses the JSON (other stdout service logs are ignored). It reassembles analytics lines that Docker splits at its ~16 KB record boundary, so large events are never dropped. By default it also ships the connector's **stderr** (e.g. the custom image's `[metrics]` emitter) — see [Record Format](#record-format). Set `TWINGATE_SHIPPER_INCLUDE_STDERR=false` for analytics only.
 
 ---
 
@@ -82,7 +82,7 @@ docker compose -f docker-compose.sidecar.yml logs -f twingate-log-shipper
 
 ## Quickstart — Docker Host-Level
 
-Use this when you want a single shipper per Docker host watching all Twingate connector containers (matched by container name containing `twingate`).
+Use this when you want a single shipper per Docker host watching all Twingate connector containers (matched by the `twingate/connector` substring against each container's name **or** image). The shipper tails every matching container concurrently and rediscovers them on a short interval, so connectors that scale up or down (e.g. under a fleet manager) are picked up and released without restarting the shipper.
 
 **1. Create a `.env` file:**
 
@@ -112,7 +112,7 @@ docker compose -f docker-compose.host.yml up -d
 docker compose -f docker-compose.host.yml logs -f twingate-log-shipper
 ```
 
-The shipper mounts `/var/lib/docker/containers` read-only from the host and tails log files for all containers whose name contains `twingate`. Make sure each connector container has `TWINGATE_LOG_ANALYTICS=v2` set — see [Enabling Analytics](#enabling-analytics-on-the-connector) below.
+The shipper mounts `/var/lib/docker/containers` read-only from the host and tails the log files of all containers matching the name/image filter. Make sure each connector container has `TWINGATE_LOG_ANALYTICS=v2` set — see [Enabling Analytics](#enabling-analytics-on-the-connector) below.
 
 ---
 
@@ -214,6 +214,9 @@ All settings are provided via environment variables prefixed with `TWINGATE_SHIP
 | `TWINGATE_SHIPPER_MODE` | `auto` | Collector mode: `auto`, `docker`, or `journald`. `auto` tries Docker first, then journald. |
 | `TWINGATE_SHIPPER_DOCKER_LOG_PATH` | `/var/lib/docker/containers` | Path to Docker container log directory (Docker mode only). |
 | `TWINGATE_SHIPPER_DOCKER_CONTAINER_NAME_FILTER` | `twingate/connector` | Substring matched against the container name or image reference. Default matches any container running the `twingate/connector` image regardless of container name. |
+| `TWINGATE_SHIPPER_DOCKER_DISCOVERY_INTERVAL_SECONDS` | `5` | How often (seconds) the host-level collector rescans for connector containers starting/stopping. Range: 1–300. |
+| `TWINGATE_SHIPPER_DOCKER_MAX_LINE_BYTES` | `1048576` | Per-container reassembly/read cap (bytes). Guards memory against a runaway unterminated log line. Minimum 65536. |
+| `TWINGATE_SHIPPER_INCLUDE_STDERR` | `true` | Also ship the connector's stderr (e.g. `[metrics]` lines). Set `false` for analytics only. See [Record Format](#record-format). |
 | `TWINGATE_SHIPPER_JOURNALD_UNIT` | `twingate-connector.service` | systemd unit name to read from (journald mode only). |
 | `TWINGATE_SHIPPER_S3_ENDPOINT_URL` | _(none)_ | Custom S3 endpoint URL. Leave unset for AWS S3. Set for MinIO, Cloudflare R2, Backblaze B2, DigitalOcean Spaces, etc. |
 | `TWINGATE_SHIPPER_S3_BUCKET` | _(required)_ | S3 bucket name. |
@@ -249,7 +252,28 @@ twingate-analytics/2024/01/15/12-00_a3f7b2c1.ndjson.gz
 - `prefix` is set by `TWINGATE_SHIPPER_S3_PREFIX` (default: `twingate-analytics`)
 - Date and time components (`YYYY`, `MM`, `DD`, `HH`, `MM`) reflect the UTC time the batch was closed
 - `uuid8` is an 8-character hex string from a random UUID, ensuring uniqueness across restarts and parallel instances
-- Files are gzip-compressed NDJSON; each line is a single analytics event JSON object
+- Files are gzip-compressed NDJSON; each line is one JSON record — see [Record Format](#record-format)
+
+---
+
+## Record Format
+
+Each line in an uploaded NDJSON file is one JSON object carrying a `_record_type` field so a downstream consumer (Datadog, Splunk, etc.) can partition a mixed batch. A single batch file may interleave records from multiple connectors and both record types; partition by `_record_type` and, for analytics, by the embedded `connector.id` / `connector.name`.
+
+| `_record_type` | Source | Shape |
+|---|---|---|
+| `analytics` | connector stdout `ANALYTICS ` lines | The parsed analytics event, unchanged, plus `_record_type`. Includes `event_type`, `connector`, `remote_network`, `connection`, `user`, etc. |
+| `stderr` | connector stderr (when `TWINGATE_SHIPPER_INCLUDE_STDERR=true`) | A JSON line (e.g. `[metrics]`) parsed into its object plus `_record_type`; a non-JSON line is kept verbatim as `{"_raw": "<line>", "_record_type": "stderr"}`. |
+
+**Examples:**
+
+```json
+{"event_type":"closed_connection","connector":{"id":"830111","name":"fc-75a5"},"connection":{"...":"..."},"_record_type":"analytics"}
+{"ts":"2026-06-26T17:54:01Z","event":"metrics","cpu_pct":0.33,"mem_bytes":109379584,"_record_type":"stderr"}
+{"_raw":"ERROR failed to reach relay: timeout","_record_type":"stderr"}
+```
+
+> **Note:** stderr can contain connector error text. If you do not want that in your bucket, set `TWINGATE_SHIPPER_INCLUDE_STDERR=false` to ship analytics only.
 
 ---
 

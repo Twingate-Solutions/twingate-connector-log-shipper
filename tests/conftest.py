@@ -66,7 +66,7 @@ def upload_queue() -> asyncio.Queue[tuple[Path, str] | None]:
     return asyncio.Queue()
 
 
-def make_docker_log_line(message: str) -> str:
+def make_docker_log_line(message: str, stream: str = "stdout") -> str:
     """Wrap a plain-text message in the Docker JSON log file format.
 
     Not a pytest fixture — import explicitly: from tests.conftest import make_docker_log_line
@@ -75,9 +75,53 @@ def make_docker_log_line(message: str) -> str:
         json.dumps(
             {
                 "log": message + "\n",
-                "stream": "stdout",
+                "stream": stream,
                 "time": "2026-03-27T00:00:00.000000000Z",
             }
         )
         + "\n"
     )
+
+
+def make_docker_chunked_lines(message: str, chunk_size: int = 16384) -> str:
+    """Emit a single container stdout line as multiple Docker json-file records.
+
+    Mimics Docker's json-file driver splitting any line longer than ``chunk_size``
+    (~16 KB in production) into several log records: every record carries a slice of
+    the line in its ``log`` field, and only the **last** record's ``log`` ends with a
+    newline. ``message`` is the logical line content WITHOUT a trailing newline.
+
+    Not a pytest fixture — import explicitly.
+    """
+    parts = [message[i : i + chunk_size] for i in range(0, len(message), chunk_size)] or [""]
+    records = []
+    for idx, part in enumerate(parts):
+        is_last = idx == len(parts) - 1
+        records.append(
+            json.dumps(
+                {
+                    "log": part + ("\n" if is_last else ""),
+                    "stream": "stdout",
+                    "time": "2026-03-27T00:00:00.000000000Z",
+                }
+            )
+            + "\n"
+        )
+    return "".join(records)
+
+
+def make_container(base: Path, container_id: str, name: str, created: str | None = None) -> Path:
+    """Create a fake Docker container dir under ``base`` and return its json.log path.
+
+    Writes a ``config.v2.json`` (with ``Name`` and optional ``Created`` ISO timestamp)
+    and an empty ``<id>-json.log``. Not a pytest fixture — import explicitly.
+    """
+    container_dir = base / container_id
+    container_dir.mkdir()
+    config: dict[str, Any] = {"Name": name}
+    if created is not None:
+        config["Created"] = created
+    (container_dir / "config.v2.json").write_text(json.dumps(config))
+    log_file = container_dir / f"{container_id}-json.log"
+    log_file.touch()
+    return log_file

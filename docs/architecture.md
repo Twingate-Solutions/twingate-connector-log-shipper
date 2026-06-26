@@ -32,8 +32,9 @@ Twingate Connector stdout
                                               S3-compatible storage
 ```
 
-- The **event queue** (capacity 10,000) carries parsed event dicts from the
-  Collector to the Batcher. A `None` sentinel signals the Batcher to flush and
+- The **event queue** (capacity 10,000) carries parsed record dicts (analytics
+  events, and stderr records when enabled — each tagged with `_record_type`) from
+  the Collector to the Batcher. A `None` sentinel signals the Batcher to flush and
   stop.
 - The **upload queue** (capacity 1,000) carries `(local_path, s3_key)` tuples
   from the Batcher to the Shipper. A `None` sentinel signals the Shipper to
@@ -51,56 +52,84 @@ Back-pressure is built in: if the Batcher falls behind, the Collector blocks on
 `BaseCollector` is an abstract base class with two methods that all
 implementations must provide:
 
-- `events() -> AsyncGenerator[dict, None]` — yields one parsed analytics event
-  dict per `ANALYTICS ` line. Implementations must filter only lines starting
-  with `ANALYTICS `, strip the prefix (10 characters including the trailing
-  space), parse the remainder as JSON, log WARN and skip malformed JSON, and
-  never raise an exception that terminates the generator.
+- `events() -> AsyncGenerator[dict, None]` — yields one record dict at a time. At
+  minimum every implementation parses connector stdout `ANALYTICS ` lines (prefix
+  stripped, remainder parsed as JSON), logs WARN and skips malformed JSON, and never
+  raises an exception that terminates the generator. The `DockerCollector` additionally
+  reassembles chunked lines and, when enabled, ships stderr records; see its section
+  below for the full behaviour and the `_record_type` tagging it applies.
 - `close() -> None` — releases any held resources (file handles, journal
   reader).
 
 ### DockerCollector (`collectors/docker.py`)
 
 Used when the shipper runs as a Docker container on the host or as a sidecar.
+It is a **manager** that tails every matching container concurrently and
+multiplexes their records into a single internal queue exposed via `events()`.
 
-**Container discovery.** `_find_container_log()` walks the Docker containers
-directory (default `/var/lib/docker/containers`). For each subdirectory it
-reads `config.v2.json` and checks whether the filter string (case-insensitive)
-is a substring of either the container's `Name` field **or** its image reference
-(`Config.Image`). Checking both fields means the default filter `"twingate/connector"`
-reliably matches any container running the official connector image regardless of
-what the user has named the container or service.
-The first match whose log file exists is returned. The log file path is
-`<containers_dir>/<container_id>/<container_id>-json.log`.
+**Container discovery (dynamic).** A discovery loop runs as a background task and
+rescans every `docker_discovery_interval_seconds` (default 5). `_find_matching_containers()`
+walks the Docker containers directory (default `/var/lib/docker/containers`) and
+returns **every** match — for each subdirectory it reads `config.v2.json` and checks
+whether the filter string (case-insensitive) is a substring of the container's `Name`
+field **or** its image reference (`Config.Image`). Checking both means the default
+filter `"twingate/connector"` matches any container running the official connector
+image regardless of its name or service. Entries are skipped unless the directory name
+is a valid 64-char hex container ID, and symlinked container directories,
+`config.v2.json`, and log files are rejected so a crafted entry under the watched tree
+cannot redirect reads to an arbitrary host file. For each newly-seen container the
+manager spawns a tailer task; tailers whose containers have gone away are reaped. This
+lets connectors that scale up and down at runtime be picked up and released without a
+restart. If no container matches on the first scan, an error is logged; the loop keeps
+retrying and self-heals on any per-scan error.
 
-**Tailing.** The collector opens the log file in text mode (UTF-8, errors
-replaced) and seeks to the end with `f.seek(0, 2)`, so historical log entries
-are not replayed on startup. It then reads one line at a time with
-`f.readline()`.
+**Per-container tailer.** Each tailer opens its `<id>/<id>-json.log` read-only
+(with `O_NOFOLLOW` where supported) and reads bounded lines with
+`f.readline(max_line_bytes)`. The seek policy avoids both replaying history and
+losing new traffic:
 
-**EOF and rotation handling.** When `readline()` returns an empty string the
-collector has reached EOF. It checks whether the inode of the file on disk
-(`log_path.stat().st_ino`) still matches the inode recorded when the file was
-opened (`os.fstat(f.fileno()).st_ino`). If the inodes differ (or the file no
-longer exists), Docker has rotated the log: the collector closes the handle,
-clears all state, and re-runs container discovery from scratch. If the inodes
-match, it is a normal EOF (no new data yet) and sleeps for 0.5 s before
-polling again.
+- present at the first scan (shipper startup) → seek to **end** (no replay);
+- discovered later with `Created` **after** the shipper started → seek to **start**
+  (a genuinely new connector — capture from birth, no loss in the discovery window);
+- discovered later with `Created` **before** the shipper started → seek to **end**
+  (a pre-existing connector adopted at runtime — move forward, no large replay).
 
-**ANALYTICS filtering.** Each raw line read from the file is a JSON object
-written by the Docker log driver, of the form:
+**EOF and rotation handling.** At EOF a tailer compares the on-disk inode against the
+inode recorded at open. If they differ, the log rotated: it closes the handle, clears
+its reassembly buffers, and reopens the fresh file from the start. If the file is gone,
+the container was removed and the tailer exits (the manager reaps it). A matching inode
+is a normal EOF — it sleeps 0.5 s and polls again.
+
+**Line reassembly.** Each physical line in the json-file is a Docker log record:
 
 ```json
 {"log": "ANALYTICS {...}\n", "stream": "stdout", "time": "..."}
 ```
 
-The collector extracts the inner `"log"` string, strips its trailing newline,
-and checks whether it starts with `"ANALYTICS "`. Lines that do not start with
-this prefix are silently discarded. Lines that do are stripped of the prefix
-and parsed as JSON to produce the event dict yielded to the queue.
+Docker splits any container line longer than ~16 KB across multiple records, only the
+last ending in a newline. The tailer keeps a reassembly buffer **per stream** and
+concatenates each record's `log` value until one ends in `\n`, then treats the
+concatenation as one logical line. This prevents large analytics events from being
+dropped as truncated JSON. A buffer that exceeds `max_line_bytes`, or a single physical
+line that does, is discarded and counted (`dropped_events`) rather than buffered
+unboundedly. A half-written record (no trailing newline yet) is left for the next poll.
 
-**If no matching container is found** at startup the collector logs an error
-and retries every 5 s.
+**stdout — ANALYTICS filtering.** A complete stdout logical line is kept only if it
+starts with `"ANALYTICS "`; the prefix is stripped and the remainder parsed as JSON.
+Non-`ANALYTICS` stdout (connector service logs) is ignored. A defensive `raw_decode`
+re-sync salvages a leading valid object if trailing bytes were appended; an
+unrecoverable payload is counted and dropped (never silent). The raw payload is logged
+only at DEBUG (it contains analytics PII).
+
+**stderr — optional capture.** When `include_stderr` is enabled (default), stderr is
+reassembled on its own per-stream buffer and shipped per complete line: an embedded
+JSON object (e.g. the custom image's `[ts] [metrics] {…}` emitter) is extracted so
+metrics arrive structured; a non-JSON line is kept verbatim under `_raw`; blank lines
+are skipped. With `include_stderr=false`, stderr is dropped.
+
+**Record tagging.** Every record put on the queue carries a `_record_type` field —
+`"analytics"` or `"stderr"` — so downstream consumers can partition a mixed batch.
+Analytics events are otherwise unchanged (additive field).
 
 ### JournaldCollector (`collectors/journald.py`)
 
@@ -288,7 +317,10 @@ startup to fail with a validation error if not set.
 |---|---|---|---|
 | `TWINGATE_SHIPPER_MODE` | `str` | `auto` | Collector mode: `auto`, `docker`, or `journald` |
 | `TWINGATE_SHIPPER_DOCKER_LOG_PATH` | `str` | `/var/lib/docker/containers` | Docker containers directory |
-| `TWINGATE_SHIPPER_DOCKER_CONTAINER_NAME_FILTER` | `str` | `twingate` | Substring matched against container names |
+| `TWINGATE_SHIPPER_DOCKER_CONTAINER_NAME_FILTER` | `str` | `twingate/connector` | Substring matched against container name or image |
+| `TWINGATE_SHIPPER_DOCKER_DISCOVERY_INTERVAL_SECONDS` | `float` (1–300) | `5` | Rescan interval for new/removed containers |
+| `TWINGATE_SHIPPER_DOCKER_MAX_LINE_BYTES` | `int` (≥65536) | `1048576` | Per-container reassembly/read cap (runaway guard) |
+| `TWINGATE_SHIPPER_INCLUDE_STDERR` | `bool` | `true` | Also ship stderr records (tagged `_record_type=stderr`) |
 | `TWINGATE_SHIPPER_JOURNALD_UNIT` | `str` | `twingate-connector.service` | systemd unit to follow |
 | `TWINGATE_SHIPPER_S3_ENDPOINT_URL` | `str \| None` | `None` (AWS S3) | Custom S3-compatible endpoint URL |
 | `TWINGATE_SHIPPER_S3_BUCKET` | `str` | **required** | Target S3 bucket |
@@ -316,7 +348,7 @@ logs.
 | Mode | Collector | How logs are accessed | Typical use |
 |---|---|---|---|
 | Docker sidecar | `DockerCollector` | Shared `logs` volume or `--volumes-from` the connector container. The connector writes to stdout; Docker captures it to a JSON log file in the shared volume. | ECS task definition, ACS container group, Kubernetes pod sidecar |
-| Docker host-level | `DockerCollector` | `/var/lib/docker/containers` mounted read-only from the host (`ro` bind mount). The shipper scans all container directories and matches by name. | Single host running one or more Twingate connector containers |
+| Docker host-level | `DockerCollector` | `/var/lib/docker/containers` mounted read-only from the host (`ro` bind mount). The shipper tails all matching containers concurrently and rediscovers them on an interval. | Single host running one or more Twingate connector containers, including fleets that scale up/down |
 | systemd service | `JournaldCollector` | systemd journal, accessed via `systemd.journal.Reader` in-process. No volume mounts required. | Linux host running the Twingate connector as a systemd unit |
 
 The connector must be started with `TWINGATE_LOG_ANALYTICS=v2` in all three

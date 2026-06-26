@@ -23,6 +23,13 @@ class ShipperConfig(BaseSettings):
     # ── Docker collector ──────────────────────────────────────────────────────
     docker_log_path: str = "/var/lib/docker/containers"
     docker_container_name_filter: str = "twingate/connector"
+    # How often to rescan for connector containers starting/stopping (FC autoscaling).
+    docker_discovery_interval_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
+    # Per-container reassembly buffer cap; guards against a runaway unterminated line.
+    docker_max_line_bytes: int = Field(default=1_048_576, ge=65_536)
+    # Also ship the container's stderr (e.g. the custom image's [metrics] emitter).
+    # Records are tagged _record_type=stderr; JSON payloads are parsed, others kept raw.
+    include_stderr: bool = True
 
     # ── journald collector ────────────────────────────────────────────────────
     journald_unit: str = "twingate-connector.service"

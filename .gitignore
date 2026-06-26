@@ -188,3 +188,6 @@ cython_debug/
 CLAUDE.md
 docs/TECHNICAL_PLAN.md
 docs/superpowers/
+docs/design-*
+docs/log-shipper*
+docs/upstream*

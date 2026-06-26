@@ -57,7 +57,13 @@ def _create_collector(cfg: ShipperConfig) -> BaseCollector:
     if mode == "auto":
         # Try Docker first if the containers directory exists
         if os.path.isdir(cfg.docker_log_path):
-            return DockerCollector(cfg.docker_log_path, cfg.docker_container_name_filter)
+            return DockerCollector(
+                cfg.docker_log_path,
+                cfg.docker_container_name_filter,
+                discovery_interval_seconds=cfg.docker_discovery_interval_seconds,
+                max_line_bytes=cfg.docker_max_line_bytes,
+                include_stderr=cfg.include_stderr,
+            )
 
         # Fall back to journald if the unit is active
         try:
@@ -79,7 +85,13 @@ def _create_collector(cfg: ShipperConfig) -> BaseCollector:
         )
 
     if mode == "docker":
-        return DockerCollector(cfg.docker_log_path, cfg.docker_container_name_filter)
+        return DockerCollector(
+            cfg.docker_log_path,
+            cfg.docker_container_name_filter,
+            discovery_interval_seconds=cfg.docker_discovery_interval_seconds,
+            max_line_bytes=cfg.docker_max_line_bytes,
+            include_stderr=cfg.include_stderr,
+        )
 
     if mode == "journald":
         return JournaldCollector(cfg.journald_unit)
@@ -206,7 +218,13 @@ async def _async_main(cfg: ShipperConfig) -> int:
         logger.warning("shipper_shutdown_timeout", component="main")
         exit_code = 1
 
-    logger.info("shutdown_complete", exit_code=exit_code, component="main")
+    dropped = getattr(collector, "dropped_events", None)
+    logger.info(
+        "shutdown_complete",
+        exit_code=exit_code,
+        dropped_events=dropped,
+        component="main",
+    )
     return exit_code
 
 
