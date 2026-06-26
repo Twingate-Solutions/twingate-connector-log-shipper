@@ -63,16 +63,33 @@ class Shipper:
         self._backoff_base = upload_backoff_base
         self._backoff_max = upload_backoff_max
 
+    def _build_boto_config(self) -> Config:
+        """Build the botocore client Config.
+
+        botocore >=1.36 defaults ``request_checksum_calculation`` to ``when_supported``,
+        attaching a CRC32 checksum to every ``PutObject``. Several S3-compatible
+        endpoints (notably Google Cloud Storage's S3 interop) reject that signing
+        variant with ``403 SignatureDoesNotMatch``. We request ``when_required`` so
+        uploads work against any S3-compatible endpoint; real AWS S3 is unaffected
+        (the request is still SigV4-signed over the body). The options are applied only
+        when the installed botocore exposes them, so older versions don't error.
+        """
+        kwargs: dict[str, object] = {
+            "connect_timeout": 10,
+            "read_timeout": 30,
+            "retries": {"max_attempts": 1},  # we manage retries ourselves
+        }
+        if "request_checksum_calculation" in getattr(Config, "OPTION_DEFAULTS", {}):
+            kwargs["request_checksum_calculation"] = "when_required"
+            kwargs["response_checksum_validation"] = "when_required"
+        return Config(**kwargs)
+
     async def run(self) -> None:
         """Consume upload queue until None sentinel received."""
         import aiobotocore.session
 
         session = aiobotocore.session.get_session()
-        boto_config = Config(
-            connect_timeout=10,
-            read_timeout=30,
-            retries={"max_attempts": 1},  # we manage retries ourselves
-        )
+        boto_config = self._build_boto_config()
 
         async with session.create_client(
             "s3",

@@ -233,6 +233,17 @@ storage (MinIO, Cloudflare R2, Backblaze B2, DigitalOcean Spaces, GCS
 interoperability, etc.). botocore retry handling is disabled (`max_attempts=1`)
 because the shipper manages its own retry loop.
 
+**Checksum compatibility.** botocore ≥1.36 defaults `request_checksum_calculation`
+to `when_supported`, attaching a CRC32 checksum to every `PutObject`. Some
+S3-compatible endpoints (notably Google Cloud Storage's S3 interop) reject that
+signing variant with `403 SignatureDoesNotMatch`, causing every upload to fail and
+discard. `_build_boto_config()` therefore sets both `request_checksum_calculation`
+and `response_checksum_validation` to `when_required`, restoring the pre-1.36
+behaviour that all S3-compatible endpoints accept. Real AWS S3 is unaffected (the
+request is still SigV4-signed over the body). The options are applied only when the
+installed botocore exposes them, so the non-Docker install path on an older botocore
+does not error.
+
 **Upload headers.** Each `put_object` call sets:
 - `ContentEncoding: gzip`
 - `ContentType: application/x-ndjson`

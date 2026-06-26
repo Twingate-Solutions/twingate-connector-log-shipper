@@ -303,9 +303,7 @@ class DockerCollector(BaseCollector):
                 component="docker_collector",
             )
 
-    async def _tail_container(
-        self, container_id: str, log_path: Path, seek_to_start: bool
-    ) -> None:
+    async def _tail_container(self, container_id: str, log_path: Path, seek_to_start: bool) -> None:
         """Tail one container's JSON log, reassembling chunked lines, until it vanishes."""
         f: IO[str] | None = None
         file_inode: int | None = None

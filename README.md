@@ -124,8 +124,17 @@ Use this when the Twingate connector is managed by systemd (not Docker).
 
 ```bash
 sudo python3.12 -m venv /opt/twingate-log-shipper/venv
-sudo /opt/twingate-log-shipper/venv/bin/pip install "git+https://github.com/twingate-solutions/twingate-connector-log-shipper.git"
+
+# Install against the repo's pinned lockfile so dependency versions are reproducible.
+# (Without -c, pip resolves dependencies loosely and could pull a surprise transitive
+# upgrade — e.g. a newer botocore whose default request checksum some S3-compatible
+# endpoints reject.) This mirrors how the Docker image installs.
+REPO=https://github.com/twingate-solutions/twingate-connector-log-shipper
+curl -fsSL "https://raw.githubusercontent.com/twingate-solutions/twingate-connector-log-shipper/main/requirements.txt" -o /tmp/tls-requirements.txt
+sudo /opt/twingate-log-shipper/venv/bin/pip install -c /tmp/tls-requirements.txt "git+$REPO.git"
 ```
+
+> The pinned set lives in `requirements.txt`. To move to newer dependency versions, update that file deliberately (and re-test) rather than letting installs float.
 
 **2. Create the service user:**
 

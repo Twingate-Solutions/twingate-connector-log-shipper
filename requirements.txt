@@ -1,17 +1,18 @@
-# Production dependencies for twingate-log-shipper
-# Regenerated 2026-04-13 — pinned to match .venv (py -3.12)
-# Regenerate with: pip freeze | grep -v -E '^(-e|pywin32)' > requirements.txt
+# Production (runtime) dependencies for twingate-log-shipper — fully pinned.
+# Updated 2026-06-26 — bumped aiohttp/urllib3/pydantic-settings/idna for CVE fixes.
+# Runtime-only: do NOT regenerate with a blanket `pip freeze` from a dev venv (it would
+# pull in test/lint deps). Bump versions here deliberately and re-run tests + pip-audit.
 # Install: pip install -r requirements.txt
 
 # Direct dependencies
 aiobotocore==3.3.0
 pydantic==2.12.4
-pydantic-settings==2.13.1
+pydantic-settings==2.14.2
 structlog==25.5.0
 
 # Transitive — pinned for supply-chain safety
 aiohappyeyeballs==2.6.1
-aiohttp==3.13.4
+aiohttp==3.14.1
 aioitertools==0.13.0
 aiosignal==1.4.0
 annotated-types==0.7.0
@@ -20,7 +21,7 @@ botocore==1.42.70
 certifi==2026.2.25
 charset-normalizer==3.4.6
 frozenlist==1.8.0
-idna==3.11
+idna==3.15
 jmespath==1.1.0
 multidict==6.7.1
 propcache==0.4.1
@@ -30,7 +31,7 @@ python-dotenv==1.2.2
 six==1.17.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-urllib3==2.6.3
+urllib3==2.7.0
 wrapt==2.1.2
 yarl==1.23.0
 

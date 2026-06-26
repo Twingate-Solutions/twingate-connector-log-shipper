@@ -58,6 +58,27 @@ def _make_shipper(
     )
 
 
+def test_shipper_config_requests_checksum_only_when_required() -> None:
+    """The botocore Config opts out of the default request/response checksums.
+
+    botocore >=1.36 attaches a CRC32 checksum to every PutObject by default
+    (request_checksum_calculation='when_supported'), which S3-compatible endpoints
+    such as GCS reject with 403 SignatureDoesNotMatch. The shipper must request
+    'when_required' so uploads work against any S3-compatible endpoint.
+    """
+    from botocore.config import Config
+
+    shipper = _make_shipper(asyncio.Queue())
+    config = shipper._build_boto_config()
+
+    # Only assert when the running botocore exposes the option (it does on >=1.36).
+    if "request_checksum_calculation" in getattr(Config, "OPTION_DEFAULTS", {}):
+        assert config.request_checksum_calculation == "when_required"
+        assert config.response_checksum_validation == "when_required"
+    # Existing behaviour preserved regardless of version.
+    assert config.retries == {"max_attempts": 1}
+
+
 @pytest.fixture
 def mock_s3_client() -> AsyncMock:
     """An AsyncMock representing the aiobotocore S3 client."""
